@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Harley Road Race</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#0e0e10;--fg:#f3efe6;--accent:#e8a317;--panel:rgba(14,14,16,.88)}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:"Trebuchet MS",Arial,sans-serif;display:flex;justify-content:center;padding:12px}
+#wrap{position:relative;width:100%;max-width:900px}
+canvas{width:100%;height:auto;display:block;border:3px solid #333;border-radius:10px;background:#222}
+#ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center}
+#box{background:var(--panel);border:2px solid var(--accent);border-radius:12px;padding:12px 18px;max-width:94%}
+h1{margin:0 0 2px;font-size:22px;color:var(--accent);letter-spacing:2px;text-transform:uppercase}
+p{margin:6px 0}
+.row{margin:8px 0;display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap}
+button{font:inherit;font-weight:bold;background:#2a2a2e;color:var(--fg);border:2px solid #555;border-radius:8px;padding:8px 16px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.on{background:var(--accent);color:#111;border-color:var(--accent)}
+button.go{background:#c0392b;border-color:#e74c3c;font-size:18px;padding:10px 28px}
+input{font:inherit;font-weight:bold;width:70px;text-align:center;padding:8px;border-radius:8px;border:2px solid #555;background:#1b1b1e;color:var(--fg)}
+small{opacity:.75}
+.cols{display:flex;gap:26px;justify-content:center;flex-wrap:wrap;align-items:flex-start}
+button.sw{width:26px;height:26px;padding:0;border-radius:50%;border:2px solid #666}
+button.sw.on{border-color:#fff;box-shadow:0 0 0 2px var(--accent)}
+#box{max-height:98%;overflow:auto}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:8px 0 12px}
+.card{background:#1b1b1e;border:2px solid #444;border-radius:10px;padding:6px;cursor:pointer;display:flex;flex-direction:column;align-items:center}
+.card:hover{border-color:#999}.card.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+.card canvas{width:68%;height:auto;border:0;border-radius:6px}.stick{position:sticky;bottom:-12px;background:var(--panel);padding:8px 0 4px;margin:0;z-index:2}.card small{font-size:11px}
+@media(max-width:560px){.cards{grid-template-columns:repeat(2,1fr)}}
+</style></head><body>
+<div id="wrap"><canvas id="c" width="900" height="420"></canvas><div id="ov"></div></div>
+<script>
+const cv=document.getElementById("c"),mainCtx=cv.getContext("2d"),ov=document.getElementById("ov");let ctx=mainCtx;
+const LEN=8000,LANEY=[262,352],PX=280;
+const DIFF={easy:{max:7.3,look:130,sw:.03},medium:{max:8.5,look:220,sw:.1},hard:{max:9.3,look:300,sw:.25}};
+let diff="medium",target=3,score=[0,0],phase="menu",cd=0,t=0,msg="";
+let pos,spd,lane,yv,hitT,obs,winner,cool,skidT,turns=[];
+const BIKES={cruiser:{n:"Cruiser",max:9.2,acc:.13,turn:1,d:"Balanced all-rounder"},sport:{n:"Sportster",max:8.8,acc:.17,turn:1.06,d:"Quick off the line"},chopper:{n:"Chopper",max:9.6,acc:.11,turn:.93,d:"Highest top speed, slow to start"},tour:{n:"Tourer",max:8.9,acc:.14,turn:1.1,d:"Most stable in turns"}};
+const COLORS=["#b3121b","#1f4fb8","#1e8449","#e8851a","#111111","#c9ccd1","#7d3c98","#f1c40f"];
+let bt="cruiser",bc="#b3121b",ct="cruiser",cc="#1f4fb8";
+function sync(){const el=document.getElementById("pt");if(el)target=Math.max(1,Math.min(20,parseInt(el.value)||3))}
+function setB(k){sync();bt=k;menu()}
+function setC(c){sync();bc=c;menu()}
+function bikeUI(){return '<div><b>Your bike</b><br><canvas id="pv" width="220" height="130" style="border-radius:8px;border:2px solid #444;margin-top:6px"></canvas>'+
+ '<p><small>'+BIKES[bt].n+' – '+BIKES[bt].d+'</small></p>'+
+ '<div class="row">'+Object.keys(BIKES).map(k=>'<button class="'+(k==bt?"on":"")+'" onclick="setB(\''+k+'\')">'+BIKES[k].n+'</button>').join("")+'</div>'+
+ '<div class="row">'+COLORS.map(c=>'<button class="sw'+(c==bc?" on":"")+'" style="background:'+c+'" onclick="setC(\''+c+'\')"></button>').join("")+'<input type="color" value="'+bc+'" onchange="setC(this.value)" style="width:36px;height:30px;padding:0"></div></div>'}
+function preview(){const pc=document.getElementById("pv");if(!pc)return;ctx=pc.getContext("2d");ctx.fillStyle="#2e2e32";ctx.fillRect(0,0,220,130);ctx.fillStyle="#3a3a3e";ctx.fillRect(0,112,220,18);ctx.fillStyle="#f3c623";ctx.fillRect(0,121,220,3);ctx.save();ctx.scale(.7,.7);bike(157,164,bc,0,false,"#2b2b2b",0,bt);ctx.restore();ctx=mainCtx}
+const keys={};
+function bump(x){let s=0;for(const t of turns)s+=t.dir*48*Math.exp(-(((x-t.c)/110)**2));return s}
+function bumpS(x){let s=0;for(const t of turns){const u=(x-t.c)/110;s+=t.dir*48*Math.exp(-u*u)*(-2*u/110)}return s}
+function roadY(x){return 34*Math.sin(x*.004)+14*Math.sin(x*.011+1)+bump(x)}
+function slopeBase(x){return 34*.004*Math.cos(x*.004)+14*.011*Math.cos(x*.011+1)}
+function slopeAt(x){return slopeBase(x)+bumpS(x)}
+
+function show(h){ov.style.display=h?"flex":"none";ov.innerHTML=h?'<div id="box">'+h+'</div>':""}
+function menu(){
+  phase="menu";
+  show('<h1>Harley Road Race</h1><p>Race the computer. First to the finish line wins the round.</p>'+
+  '<p><small>→ accelerate &nbsp; ← brake &nbsp; ↑ ↓ change lane (dodge oil slicks, brake for sharp turns!)</small></p>'+
+  '<div class="cols"><div><div class="row"><b>Difficulty:</b>'+["easy","medium","hard"].map(d=>'<button class="'+(d==diff?"on":"")+'" onclick="setD(\''+d+'\')">'+d[0].toUpperCase()+d.slice(1)+'</button>').join("")+'</div>'+
+  '<div class="row"><b>Points to win:</b><button onclick="setT(-1)">−</button><input id="pt" type="number" min="1" max="20" value="'+target+'" onchange="setT(0)"><button onclick="setT(1)">+</button></div>'+
+  '<div class="row"><button class="go" onclick="startGame()">START RACE</button></div></div>'+bikeUI()+'</div>');preview();
+}
+function setD(d){diff=d;menu()}
+function setT(n){const el=document.getElementById("pt");let v=(parseInt(el.value)||1)+n;target=Math.max(1,Math.min(20,v));el.value=target;}
+function startGame(){const el=document.getElementById("pt");target=Math.max(1,Math.min(20,parseInt(el.value)||3));score=[0,0];const ks=Object.keys(BIKES);ct=ks[Math.floor(Math.random()*ks.length)];const m=parseInt(bc.slice(1),16),r=m>>16,g=(m>>8)&255,b=m&255;cc=(b>r&&b>g)?"#e8851a":"#1f4fb8";newRound()}
+function newRound(){
+  pos=[0,0];spd=[0,0];lane=[0,1];yv=[LANEY[0],LANEY[1]];hitT=[0,0];skidT=[0,0];winner=-1;cool=0;obs=[];turns=[];
+  for(let c=1400;c<LEN-800;c+=1000+Math.random()*500)turns.push({c,dir:Math.random()<.5?-1:1});
+  for(let x=700;x<LEN-400;x+=380+Math.random()*350)if(!turns.some(t=>Math.abs(t.c-x)<260))obs.push({x,l:Math.random()<.5?0:1,h:[0,0]});
+  phase="count";cd=180;show("");
+}
+function endRound(){
+  score[winner]++;
+  if(score[winner]>=target){phase="over";
+    show('<h1>'+(winner==0?"You Win!":"Computer Wins")+'</h1><p style="font-size:22px">Final score: You '+score[0]+' – '+score[1]+' CPU</p><p>'+(winner==0?"The road is yours. Ride on!":"Better luck next time.")+'</p><div class="row"><button class="go" onclick="startGame()">Play Again</button><button onclick="menu()">Settings</button><button onclick="exitGame()" style="border-color:#e74c3c">Exit Game</button></div>');
+  }else{phase="between";cd=150;msg=(winner==0?"You won the round!":"Computer won the round")}
+}
+function exitGame(){
+  phase="exit";show('<h1>Thanks for playing!</h1><p>Ride safe out there.</p><div class="row"><button onclick="menu()">Back to Main Menu</button></div>');
+  try{window.close()}catch(e){}
+}
+addEventListener("keydown",e=>{
+  if(e.key.startsWith("Arrow")){e.preventDefault();
+    if(!keys[e.key]&&phase=="race"){if(e.key=="ArrowUp")lane[0]=0;if(e.key=="ArrowDown")lane[0]=1}
+    keys[e.key]=true}
+});
+addEventListener("keyup",e=>{keys[e.key]=false});
+
+function update(dt){
+  t+=dt;
+  if(phase=="count"){cd-=dt;if(cd<=0){phase="race"}}
+  if(phase=="between"){cd-=dt;if(cd<=0)newRound()}
+  if(phase!="race"&&phase!="between"&&phase!="over")return;
+  if(phase=="race"||phase=="between"||phase=="over"){
+    const D=DIFF[diff];
+    for(let i=0;i<2;i++){
+      const fin=winner>=0||pos[i]>=LEN;
+      let mx=i==0?BIKES[bt].max:D.max;
+      if(i==0){
+        if(!fin&&phase=="race"){
+          if(keys.ArrowRight)spd[0]+=BIKES[bt].acc*dt;else spd[0]-=.04*dt;
+          if(keys.ArrowLeft)spd[0]-=.3*dt;
+        }else spd[0]-=.15*dt;
+      }else{
+        if(phase=="race"&&pos[1]<LEN){
+          let want=mx*(.94+.06*Math.sin(t/50));
+          if(pos[1]>pos[0]+250)want*=.93;if(pos[1]<pos[0]-250&&diff!="easy")want*=1.03;
+          const TF={easy:1.2,medium:1.05,hard:.98}[diff];
+          const nt=turns.find(tn=>tn.c+170>pos[1]&&tn.c-450<pos[1]);
+          if(nt){const ins=nt.dir<0?0:1;if(diff!="easy"&&lane[1]!=ins&&cool<=0&&pos[1]<nt.c-200&&!obs.some(o=>o.l==ins&&o.x>pos[1]&&o.x<pos[1]+250)){lane[1]=ins;cool=40}want=Math.min(want,(lane[1]==ins?7.4:5.8)*TF)}
+          spd[1]+=(want-spd[1])*(want<spd[1]?.07:.03)*dt;
+          cool-=dt;
+          const o=obs.find(o=>o.l==lane[1]&&o.x>pos[1]&&o.x-pos[1]<D.look);
+          if(o&&cool<=0&&Math.random()<D.sw*dt){lane[1]=1-lane[1];cool=40}
+        }else spd[1]-=.15*dt;
+      }
+      spd[i]+=slopeBase(pos[i])*.5*dt;spd[i]=Math.max(0,Math.min(mx,spd[i]));
+      pos[i]+=spd[i]*dt;
+      if(phase=="race")for(const tn of turns)if(Math.abs(pos[i]-tn.c)<170){const lim=(lane[i]==(tn.dir<0?0:1)?7.4:5.8)*(i?1:BIKES[bt].turn);if(spd[i]>lim+.2){spd[i]-=(spd[i]-lim)*.1*dt;skidT[i]=15;hitT[i]=Math.max(hitT[i],6)}}
+      if(skidT[i]>0)skidT[i]-=dt;
+      if(hitT[i]>0)hitT[i]-=dt;
+      if(phase=="race")for(const o of obs){
+        if(o.l==lane[i]&&!o.h[i]&&Math.abs(pos[i]-o.x)<28){o.h[i]=1;spd[i]*=.4;hitT[i]=40}
+      }
+      yv[i]+=(LANEY[lane[i]]-yv[i])*.2*dt;
+    }
+    if(phase=="race"&&winner<0){
+      if(pos[0]>=LEN||pos[1]>=LEN){winner=pos[0]>=pos[1]?0:1;if(pos[0]>=LEN&&pos[1]>=LEN)winner=pos[0]>=pos[1]?0:1;endRound()}
+    }
+  }
+}
+
+/* ---------- drawing ---------- */
+function wheel(x,y,rot){
+  ctx.save();ctx.translate(x,y);
+  ctx.beginPath();ctx.arc(0,0,27,0,7);ctx.strokeStyle="#0b0b0b";ctx.lineWidth=9;ctx.stroke();
+  ctx.beginPath();ctx.arc(0,0,21,0,7);ctx.strokeStyle="#555";ctx.lineWidth=1.5;ctx.stroke();
+  ctx.beginPath();ctx.arc(0,0,17,0,7);ctx.strokeStyle="#dfe6ea";ctx.lineWidth=3;ctx.stroke();
+  ctx.rotate(rot);ctx.strokeStyle="#bfc7cc";ctx.lineWidth=1;
+  for(let i=0;i<16;i++){ctx.rotate(Math.PI/8);ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(17,0);ctx.stroke()}
+  ctx.beginPath();ctx.arc(0,0,5,0,7);ctx.fillStyle="#e6ebee";ctx.fill();
+  ctx.beginPath();ctx.arc(0,0,11,0,7);ctx.strokeStyle="#888";ctx.lineWidth=2;ctx.stroke();
+  ctx.restore();
+}
+function chrome(x1,y1,x2,y2,w){
+  ctx.lineCap="round";ctx.strokeStyle="#7d868c";ctx.lineWidth=w+2;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+  ctx.strokeStyle="#e8eef1";ctx.lineWidth=w;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+}
+function bike(x,y,color,rot,wob,jacket,ang,type,c2){const f2=c2||color,ch=type=="chopper",sp=type=="sport",tr=type=="tour",fw=ch?68:52,bh=ch?-118:sp?-84:-100;
+  ctx.save();ctx.translate(x,y);ctx.rotate(ang||0);if(wob)ctx.rotate(Math.sin(t*.8)*.1);
+  ctx.fillStyle="rgba(0,0,0,.35)";ctx.beginPath();ctx.ellipse(0,0,85,8,0,0,7);ctx.fill();
+  ctx.translate(0,-0);
+  // exhaust pipes (staggered dual)
+  chrome(0,-24,-78,-30,7);chrome(6,-18,-80,-22,6);
+  ctx.fillStyle="#222";ctx.beginPath();ctx.arc(-80,-26,5,0,7);ctx.fill();
+  wheel(-52,-27,rot);wheel(fw,-27,rot);
+  // rear fender
+  ctx.beginPath();ctx.arc(-52,-27,32,Math.PI*1.05,Math.PI*1.75);ctx.strokeStyle=f2;ctx.lineWidth=7;ctx.stroke();
+  // saddlebag
+  if(!sp&&!ch){ctx.fillStyle="#1a1a1a";ctx.beginPath();ctx.roundRect(-76,-56,40,24,8);ctx.fill();
+  ctx.strokeStyle="#c9a24a";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(-72,-50);ctx.lineTo(-40,-50);ctx.stroke()}
+  // frame + engine block
+  ctx.fillStyle="#2b2f33";ctx.beginPath();ctx.roundRect(-26,-46,56,26,5);ctx.fill();
+  ctx.fillStyle="#9aa3a8";ctx.beginPath();ctx.roundRect(-14,-40,28,14,3);ctx.fill();
+  // V-twin cylinders with fins
+  [[-12,-.5],[10,.5]].forEach(([cx,a])=>{
+    ctx.save();ctx.translate(cx,-46);ctx.rotate(a);
+    ctx.fillStyle="#3a4045";ctx.fillRect(-7,-26,14,26);
+    ctx.fillStyle="#b8c0c5";for(let i=0;i<5;i++)ctx.fillRect(-9,-25+i*5,18,2.5);
+    ctx.fillStyle="#222";ctx.fillRect(-6,-30,12,5);ctx.restore();
+  });
+  // primary cover + air cleaner
+  ctx.fillStyle="#d7dde0";ctx.beginPath();ctx.arc(-24,-36,9,0,7);ctx.fill();ctx.strokeStyle="#777";ctx.lineWidth=1.5;ctx.stroke();
+  ctx.fillStyle="#cfd6da";ctx.beginPath();ctx.arc(24,-58,9,0,7);ctx.fill();ctx.stroke();
+  // fuel tank
+  const g=ctx.createLinearGradient(0,-86,0,-58);g.addColorStop(0,"#fff8");g.addColorStop(.25,color);g.addColorStop(1,"#000a");
+  ctx.fillStyle=g;ctx.beginPath();ctx.moveTo(-30,-62);ctx.bezierCurveTo(-26,-84,14,-90,30,-72);ctx.bezierCurveTo(32,-62,10,-56,-30,-62);ctx.fill();
+  ctx.strokeStyle="#e8eef1";ctx.lineWidth=2;ctx.stroke();
+  if(ch){ctx.fillStyle="#ffb02e";ctx.beginPath();ctx.moveTo(-28,-64);ctx.quadraticCurveTo(-18,-76,-4,-68);ctx.quadraticCurveTo(-14,-69,-10,-62);ctx.quadraticCurveTo(-18,-66,-28,-64);ctx.fill()}
+  if(sp){ctx.fillStyle="#fff";ctx.fillRect(-74,-70,16,13);ctx.fillStyle="#111";ctx.font="bold 11px Arial";ctx.textAlign="center";ctx.fillText("7",-66,-60)}
+  // seat
+  ctx.fillStyle="#141414";ctx.beginPath();ctx.moveTo(-62,-60);ctx.quadraticCurveTo(-40,-56,-30,-66);ctx.lineTo(-26,-60);ctx.quadraticCurveTo(-45,-48,-64,-52);ctx.fill();
+  // front fork, fender, headlight
+  chrome(fw-8,-27,28,-76,5);chrome(fw-4,-27,32,-76,3);
+  ctx.beginPath();ctx.arc(fw,-27,31,Math.PI*1.2,Math.PI*1.75);ctx.strokeStyle=f2;ctx.lineWidth=6;ctx.stroke();
+  if(tr){ctx.fillStyle=color;ctx.beginPath();ctx.ellipse(36,-72,15,14,0,0,7);ctx.fill();ctx.strokeStyle="#e8eef1";ctx.lineWidth=2;ctx.stroke();ctx.fillStyle="#9fd3ff99";ctx.beginPath();ctx.moveTo(34,-84);ctx.lineTo(16,-128);ctx.lineTo(26,-128);ctx.lineTo(46,-86);ctx.fill()}
+  ctx.fillStyle="#f4f1d2";ctx.strokeStyle="#aab";ctx.lineWidth=2;ctx.beginPath();ctx.arc(38,-70,8,0,7);ctx.fill();ctx.stroke();
+  // ape-hanger handlebars
+  chrome(30,-76,24,bh,4);chrome(24,bh,10,bh,4);
+  // rider
+  const L=jacket;
+  ctx.lineCap="round";ctx.lineJoin="round";
+  ctx.strokeStyle="#2a3f66";ctx.lineWidth=11;ctx.beginPath();ctx.moveTo(-44,-62);ctx.lineTo(-8,-58);ctx.lineTo(24,-40);ctx.stroke();
+  ctx.strokeStyle="#111";ctx.lineWidth=9;ctx.beginPath();ctx.moveTo(24,-40);ctx.lineTo(28,-28);ctx.stroke();
+  ctx.strokeStyle=L;ctx.lineWidth=17;ctx.beginPath();ctx.moveTo(-44,-70);ctx.lineTo(-30,-98);ctx.stroke();
+  ctx.lineWidth=8;ctx.beginPath();ctx.moveTo(-30,-98);ctx.lineTo(0,-108);ctx.lineTo(14,bh);ctx.stroke();
+  ctx.fillStyle="#111";ctx.beginPath();ctx.arc(12,bh,5,0,7);ctx.fill();
+  ctx.fillStyle="#e5e5e5";ctx.beginPath();ctx.arc(-24,-120,13,0,7);ctx.fill();
+  ctx.fillStyle="#111";ctx.beginPath();ctx.arc(-24,-122,13,Math.PI,0);ctx.fill();
+  ctx.fillStyle="#6cc3ff";ctx.fillRect(-20,-124,10,6);
+  ctx.restore();
+}
+function drawBg(cam){
+  const sky=ctx.createLinearGradient(0,0,0,170);sky.addColorStop(0,"#4a86c5");sky.addColorStop(1,"#f2c48a");
+  ctx.fillStyle=sky;ctx.fillRect(0,0,900,170);
+  ctx.fillStyle="#fff7";for(let i=0;i<4;i++){const x=((i*260-cam*.05)%1100+1100)%1100-100;ctx.beginPath();ctx.ellipse(x,40+i*12,60,14,0,0,7);ctx.ellipse(x+30,34+i*12,40,12,0,0,7);ctx.fill()}
+  ctx.fillStyle="#5d6f82";ctx.beginPath();ctx.moveTo(0,150);for(let x=0;x<=900;x+=30){const w=(x+cam*.15);ctx.lineTo(x,120-Math.abs(Math.sin(w*.008))*45-Math.sin(w*.021)*10)}ctx.lineTo(900,150);ctx.fill();
+  ctx.fillStyle="#3f6b3a";ctx.fillRect(0,140,900,40);
+  for(let i=0;i<10;i++){const x=((i*110-cam*.4)%1100+1100)%1100-100;ctx.fillStyle="#4a3524";ctx.fillRect(x-3,120,6,34);ctx.fillStyle="#2c5a2c";ctx.beginPath();ctx.arc(x,112,20,0,7);ctx.fill()}
+  const base=roadY(cam),oy=sx=>roadY(cam+sx-PX)-base;
+  ctx.fillStyle="#3f6b3a";ctx.fillRect(0,170,900,250);
+  const edge=y=>{ctx.beginPath();for(let x=0;x<=900;x+=6){const yy=y+oy(x);x?ctx.lineTo(x,yy):ctx.moveTo(x,yy)}};
+  edge(186);for(let x=900;x>=0;x-=6)ctx.lineTo(x,412+oy(x));ctx.closePath();ctx.fillStyle="#333336";ctx.fill();
+  edge(176);ctx.strokeStyle="#9aa";ctx.lineWidth=6;ctx.stroke();
+  ctx.fillStyle="#677";for(let i=0;i<20;i++){const x=((i*60-cam)%1200+1200)%1200-60;ctx.fillRect(x,170+oy(x),4,16)}
+  ctx.strokeStyle="#f5f5f5";ctx.lineWidth=4;edge(188);ctx.stroke();edge(410);ctx.stroke();
+  ctx.strokeStyle="#f3c623";ctx.lineWidth=5;const off=((cam%90)+90)%90;
+  for(let x=-90;x<990;x+=90){const a=x-off,b=a+50;ctx.beginPath();ctx.moveTo(a,307+oy(a));ctx.lineTo(b,307+oy(b));ctx.stroke()}
+}
+function draw(){
+  const cam=pos?pos[0]:0;
+  const R=x=>roadY(cam+x-PX)-roadY(cam);
+  drawBg(cam);
+  if(pos){
+    for(const tn of turns)for(const o of [-330,-60,0,60]){const sx=PX+(tn.c+o-cam);if(sx<-30||sx>930)continue;
+      ctx.fillStyle="#f3c623";ctx.font="bold 18px Arial";ctx.textAlign="center";
+      if(o==-330){const y=140+R(sx);ctx.fillRect(sx-2,y,4,34);ctx.save();ctx.translate(sx,y);ctx.rotate(Math.PI/4);ctx.fillRect(-16,-16,32,32);ctx.restore();ctx.fillStyle="#111";ctx.fillText("!",sx,y+6)}
+      else{const y=(tn.dir<0?428:160)+R(sx);ctx.fillRect(sx-13,y-13,26,26);ctx.fillStyle="#111";ctx.fillText(tn.dir<0?"▲":"▼",sx,y+6)}}
+    // finish line
+    const fx=PX+(LEN-cam);
+    if(fx>-40&&fx<940){for(let r=0;r<16;r++)for(let c=0;c<2;c++){ctx.fillStyle=(r+c)%2?"#111":"#fff";ctx.fillRect(fx+c*12,190+r*14+R(fx),12,14)}}
+    for(const o of obs){const sx=PX+(o.x-cam);if(sx>-60&&sx<960){const y=LANEY[o.l]-8+R(sx);ctx.fillStyle="#0a0a0c";ctx.beginPath();ctx.ellipse(sx,y,36,10,0,0,7);ctx.fill();ctx.fillStyle="#5b3d8f55";ctx.beginPath();ctx.ellipse(sx-6,y-2,18,4,0,0,7);ctx.fill()}}
+    const order=lane[0]<=lane[1]?[0,1]:[1,0];
+    for(const i of order){
+      const sx=PX+(pos[i]-cam);
+      if(sx>-140&&sx<1040)bike(sx,yv[i]+R(sx),i==0?bc:cc,pos[i]/27,hitT[i]>0,i==0?bj:"#6b4a2a",Math.atan(slopeAt(pos[i])),i==0?bt:ct,i==0?b2:null);
+      else{ctx.fillStyle=i?cc:bc;ctx.font="bold 16px Arial";ctx.textAlign=sx>900?"right":"left";ctx.fillText(sx>900?"CPU ►":"◄ CPU",sx>900?890:10,yv[i]-40)}
+    }
+    // HUD
+    ctx.fillStyle="#000a";ctx.fillRect(0,0,900,34);
+    ctx.fillStyle="#f3efe6";ctx.font="bold 16px Arial";ctx.textAlign="left";
+    ctx.fillText("YOU "+score[0]+"  —  "+score[1]+" CPU",12,22);
+    ctx.textAlign="center";ctx.fillText("First to "+target+"  •  "+diff.toUpperCase(),450,22);
+    ctx.fillStyle="#333";ctx.fillRect(640,12,240,10);
+    ctx.fillStyle=bc;ctx.fillRect(640+Math.min(1,pos[0]/LEN)*230,10,10,14);
+    ctx.fillStyle=cc;ctx.fillRect(640+Math.min(1,pos[1]/LEN)*230,10,10,14);
+    ctx.textAlign="right";ctx.fillStyle="#f3efe6";ctx.font="12px Arial";ctx.fillText("Speed "+Math.round(spd[0]*13)+" mph",630,22);
+    if(phase=="race"){const nt=turns.find(tn=>tn.c+170>pos[0]);if(nt){const d=nt.c-170-pos[0];let s="",col="#ffd23f";
+      if(d>0&&d<520)s="⚠ SHARP TURN AHEAD – brake! The "+(nt.dir<0?"upper ↑":"lower ↓")+" lane is faster";
+      else if(d<=0){const lim=(lane[0]==(nt.dir<0?0:1)?7.4:5.8)*BIKES[bt].turn,sk=spd[0]>lim+.2;s=sk?"SKID! Brake! (limit "+Math.round(lim*13)+" mph)":"In the turn – limit "+Math.round(lim*13)+" mph";if(sk)col="#ff5a4d"}
+      if(s){ctx.font="bold 18px Arial";ctx.textAlign="center";ctx.fillStyle="#000a";ctx.fillRect(170,44,560,28);ctx.fillStyle=col;ctx.fillText(s,450,64)}}}
+    ctx.textAlign="center";ctx.font="bold 72px Arial";ctx.lineWidth=6;ctx.strokeStyle="#000";
+    if(phase=="count"){const n=Math.ceil(cd/60);const s=n>0?String(n):"GO!";ctx.strokeText(s,450,140);ctx.fillStyle="#e8a317";ctx.fillText(s,450,140)}
+    if(phase=="between"){ctx.font="bold 40px Arial";ctx.strokeText(msg,450,140);ctx.fillStyle="#e8a317";ctx.fillText(msg,450,140)}
+  }
+}
+let last=performance.now();
+function loop(n){const dt=Math.min(2,(n-last)/16.667);last=n;update(dt);draw();requestAnimationFrame(loop)}
+/* ---- main menu with bike cards and color schemes ---- */
+const SCHEMES=[{n:"Racing Red",a:"#b3121b",b:"#1a1a1a",j:"#2b2b2b"},{n:"Midnight Black",a:"#111111",b:"#111111",j:"#4a4a4f"},{n:"Ocean Blue and Silver",a:"#1f4fb8",b:"#c9ccd1",j:"#1b2b4a"},{n:"Outlaw Green",a:"#1e8449",b:"#111111",j:"#2b2b2b"},{n:"Sunset Orange and Black",a:"#e8851a",b:"#111111",j:"#3a2a1a"},{n:"Royal Purple and Chrome",a:"#7d3c98",b:"#c9ccd1",j:"#222222"},{n:"Pearl White and Red",a:"#f2f2f2",b:"#b3121b",j:"#5a1a1a"},{n:"Desert Gold",a:"#d4a017",b:"#6b4a2a",j:"#4a3520"}];
+let sc=0,b2="#1a1a1a",bj="#2b2b2b";
+function setS(i){sync();sc=i;const s=SCHEMES[i];bc=s.a;b2=s.b;bj=s.j;menu()}
+function setC(c){sync();sc=-1;bc=c;b2=c;menu()}
+function thumbs(){document.querySelectorAll("canvas.th").forEach(c=>{ctx=c.getContext("2d");ctx.fillStyle="#2e2e32";ctx.fillRect(0,0,140,84);ctx.fillStyle="#3a3a3e";ctx.fillRect(0,70,140,14);ctx.save();ctx.scale(.55,.55);bike(127,128,bc,0,false,bj,0,c.dataset.k,b2);ctx.restore()});ctx=mainCtx}
+function menu(){
+  phase="menu";
+  show('<h1>Harley Road Race</h1><p><small>→ accelerate · ← brake · ↑ ↓ change lane · brake for sharp turns, dodge oil slicks</small></p>'+
+  '<b>1. Choose your bike</b><div class="cards">'+Object.keys(BIKES).map(k=>'<div class="card'+(k==bt?' on':'')+'" onclick="setB(\''+k+'\')"><canvas class="th" data-k="'+k+'" width="140" height="84"></canvas><b>'+BIKES[k].n+'</b><small>'+BIKES[k].d+'</small></div>').join('')+'</div>'+
+  '<b>2. Choose a color scheme</b> <small>– '+(sc>=0?SCHEMES[sc].n:'Custom')+'</small><div class="row">'+SCHEMES.map((s,i)=>'<button class="sw'+(i==sc?' on':'')+'" title="'+s.n+'" style="background:linear-gradient(135deg,'+s.a+' 50%,'+s.b+' 50%)" onclick="setS('+i+')"></button>').join('')+'<label><small>Custom</small> <input type="color" value="'+bc+'" onchange="setC(this.value)" style="width:36px;height:30px;padding:0"></label></div>'+
+  '<b>3. Race settings</b><div class="row">'+['easy','medium','hard'].map(d=>'<button class="'+(d==diff?'on':'')+'" onclick="setD(\''+d+'\')">'+d[0].toUpperCase()+d.slice(1)+'</button>').join('')+'<span>&nbsp;Points to win:</span><button onclick="setT(-1)">−</button><input id="pt" type="number" min="1" max="20" value="'+target+'" onchange="setT(0)"><button onclick="setT(1)">+</button></div>'+
+  '<div class="row stick"><button class="go" onclick="startGame()">START RACE</button></div>');
+  thumbs();
+}
+menu();requestAnimationFrame(loop);
+</script></body></html>
